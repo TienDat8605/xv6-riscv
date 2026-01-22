@@ -132,7 +132,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_trace]    sys_trace,
 };
 
-// Human-readable syscall names for tracing; indexed by syscall number.
+//syscall name
 static char *syscalls_names[] = {
 [SYS_fork]    "fork",
 [SYS_exit]    "exit",
