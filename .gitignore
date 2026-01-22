@@ -16,3 +16,13 @@ kernel/kernel
 user/usys.S
 .gdbinit
 TAGS
+.vscode/
+kernel/*.img
+kernel/*.sym
+fs.img
+ramdisk.img
+serial.log
+qemu.pid
+qemu-*.log
+core
+tmp*
