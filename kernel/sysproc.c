@@ -116,3 +116,12 @@ sys_getprocs(void)
   argaddr(0, &addr); // Get the pointer passed from user space
   return getprocs(addr);
 }
+
+uint64
+sys_trace(void)
+{
+  int mask;
+  argint(0, &mask);
+  myproc()->trace_mask = mask;
+  return 0;
+}

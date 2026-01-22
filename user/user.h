@@ -51,3 +51,6 @@ void free(void*);
 //procinfo.c
 struct procinfo; // Forward declaration
 int getprocs(struct procinfo*);
+
+//trace
+int trace(int);
