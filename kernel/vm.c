@@ -17,6 +17,15 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+struct {
+uint64 pa; // Physical address of the shared page
+int refcount; // Reference count
+struct spinlock lock; // Lock to protect access
+int allocated; // Whether the page is allocated
+} shmem_page;
+// Define a specific region for shared memory
+#define SHMEM_REGION 0x4000000 // 64MB mark
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -203,6 +212,23 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       continue;   
     if((*pte & PTE_V) == 0)  // has physical page been allocated?
       continue;
+    
+    if(a == SHMEM_REGION && shmem_page.allocated && do_free) {
+      acquire(&shmem_page.lock);
+  
+      shmem_page.refcount--;
+  
+      if (shmem_page.refcount == 0) {
+        kfree((void*)shmem_page.pa);
+        shmem_page.allocated = 0;
+        shmem_page.pa = 0;
+      }
+  
+      release(&shmem_page.lock);
+      *pte = 0;
+      continue;  
+    }
+    
     if(do_free){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
@@ -306,6 +332,18 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue;   // page table entry hasn't been allocated
     if((*pte & PTE_V) == 0)
       continue;   // physical page hasn't been allocated
+        if(i == SHMEM_REGION && shmem_page.allocated) {
+      pa = PTE2PA(*pte);
+      flags = PTE_FLAGS(*pte);
+      if(mappages(new, i, PGSIZE, pa, flags) != 0){
+        goto err;
+      }
+      acquire(&shmem_page.lock);
+      shmem_page.refcount++;
+      release(&shmem_page.lock);
+      continue;
+    }
+    
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -316,6 +354,21 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       goto err;
     }
   }
+  
+  // in case shared memory region allocated and sz < SHMEM_REGION
+  if(shmem_page.allocated && sz <= SHMEM_REGION) {
+    if((pte = walk(old, SHMEM_REGION, 0)) != 0 && (*pte & PTE_V)) {
+      pa = PTE2PA(*pte);
+      flags = PTE_FLAGS(*pte);
+      if(mappages(new, SHMEM_REGION, PGSIZE, pa, flags) != 0){
+        goto err;
+      }
+      acquire(&shmem_page.lock);
+      shmem_page.refcount++;
+      release(&shmem_page.lock);
+    }
+  }
+  
   return 0;
 
  err:
@@ -482,5 +535,84 @@ ismapped(pagetable_t pagetable, uint64 va)
   if (*pte & PTE_V){
     return 1;
   }
+  return 0;
+}
+
+void 
+init_shmem(void)
+{
+  shmem_page.pa = 0;
+  shmem_page.allocated = 0;
+  shmem_page.refcount = 0;
+  initlock(&shmem_page.lock,"shmem_page_lock");
+}
+
+uint64
+mmap() 
+{
+  acquire(&shmem_page.lock);
+  
+  if (shmem_page.allocated == 0)
+  {
+    shmem_page.pa = (uint64)kalloc();
+    if (shmem_page.pa == 0) {
+      release(&shmem_page.lock);
+      return 0;
+    }
+    memset((void*)shmem_page.pa, 0, PGSIZE);
+    shmem_page.allocated = 1;
+    shmem_page.refcount = 1;
+  }
+  else
+  {
+    shmem_page.refcount++;
+  }
+  
+  struct proc *p = myproc();
+  
+  if (mappages(p->pagetable, SHMEM_REGION, PGSIZE, shmem_page.pa, PTE_R | PTE_W | PTE_U) != 0) {
+
+    shmem_page.refcount--;
+    if (shmem_page.refcount == 0) {
+      kfree((void*)shmem_page.pa);
+      shmem_page.allocated = 0;
+      shmem_page.pa = 0;
+    }
+    release(&shmem_page.lock);
+    return 0;
+  }
+  
+  release(&shmem_page.lock);
+  return SHMEM_REGION;
+}
+
+int
+munmap(uint64 addr)
+{
+  if (addr != SHMEM_REGION) {
+    return -1;
+  }
+  
+  struct proc *p = myproc();
+  
+  pte_t *pte = walk(p->pagetable, addr, 0);
+  
+  if (pte == 0 || (*pte & PTE_V) == 0) {
+    return -1;
+  }
+  
+  *pte = 0;
+  
+  acquire(&shmem_page.lock);
+  
+  shmem_page.refcount--;
+  
+  if (shmem_page.refcount == 0) {
+    kfree((void*)shmem_page.pa);
+    shmem_page.allocated = 0;
+    shmem_page.pa = 0;
+  }
+  
+  release(&shmem_page.lock);
   return 0;
 }

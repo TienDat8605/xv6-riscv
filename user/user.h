@@ -54,3 +54,7 @@ int getprocs(struct procinfo*);
 
 //trace
 int trace(int);
+
+//shared memory
+uint64 mmap(void);
+int munmap(uint64);
