@@ -24,3 +24,5 @@
 #define SYS_trace 23
 #define SYS_mmap 24
 #define SYS_munmap 25
+#define SYS_mmap_adv 26
+#define SYS_munmap_adv 27

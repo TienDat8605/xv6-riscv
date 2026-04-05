@@ -58,3 +58,5 @@ int trace(int);
 //shared memory
 uint64 mmap(void);
 int munmap(uint64);
+uint64 mmap_adv(void);
+int munmap_adv(uint64);

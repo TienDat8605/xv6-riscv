@@ -26,6 +26,32 @@ int allocated; // Whether the page is allocated
 // Define a specific region for shared memory
 #define SHMEM_REGION 0x4000000 // 64MB mark
 
+#define SHMEM_ADV_MAX_REGIONS 64
+#define SHMEM_ADV_REGION_TOP TRAPFRAME
+#define SHMEM_ADV_REGION_BASE (SHMEM_ADV_REGION_TOP - SHMEM_ADV_MAX_REGIONS * PGSIZE)
+
+struct shmem_adv_entry {
+  uint64 pa;
+  int refcount;
+  int allocated;
+};
+
+struct {
+  struct shmem_adv_entry entries[SHMEM_ADV_MAX_REGIONS];
+  struct spinlock lock;
+} shmem_adv_table;
+
+static int
+shmem_adv_find_entry_by_pa(uint64 pa)
+{
+  for(int i = 0; i < SHMEM_ADV_MAX_REGIONS; i++){
+    if(shmem_adv_table.entries[i].allocated && shmem_adv_table.entries[i].pa == pa){
+      return i;
+    }
+  }
+  return -1;
+}
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -615,4 +641,191 @@ munmap(uint64 addr)
   
   release(&shmem_page.lock);
   return 0;
+}
+
+void
+init_shmem_adv(void)
+{
+  initlock(&shmem_adv_table.lock, "shmem_adv_lock");
+  for(int i = 0; i < SHMEM_ADV_MAX_REGIONS; i++){
+    shmem_adv_table.entries[i].pa = 0;
+    shmem_adv_table.entries[i].refcount = 0;
+    shmem_adv_table.entries[i].allocated = 0;
+  }
+}
+
+uint64
+mmap_adv(void)
+{
+  struct proc *p = myproc();
+  uint64 va;
+  uint64 pa = 0;
+  int slot = -1;
+  pte_t *pte;
+
+  for(va = SHMEM_ADV_REGION_BASE; va < SHMEM_ADV_REGION_TOP; va += PGSIZE){
+    if(va < PGROUNDUP(p->sz))
+      continue;
+    pte = walk(p->pagetable, va, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0)
+      break;
+  }
+  if(va >= SHMEM_ADV_REGION_TOP)
+    return 0;
+
+  acquire(&shmem_adv_table.lock);
+  for(int i = 0; i < SHMEM_ADV_MAX_REGIONS; i++){
+    if(shmem_adv_table.entries[i].allocated == 0){
+      slot = i;
+      break;
+    }
+  }
+  if(slot < 0){
+    release(&shmem_adv_table.lock);
+    return 0;
+  }
+
+  pa = (uint64)kalloc();
+  if(pa == 0){
+    release(&shmem_adv_table.lock);
+    return 0;
+  }
+  memset((void*)pa, 0, PGSIZE);
+  shmem_adv_table.entries[slot].pa = pa;
+  shmem_adv_table.entries[slot].refcount = 1;
+  shmem_adv_table.entries[slot].allocated = 1;
+  release(&shmem_adv_table.lock);
+
+  if(mappages(p->pagetable, va, PGSIZE, pa, PTE_R | PTE_W | PTE_U) != 0){
+    acquire(&shmem_adv_table.lock);
+    if(shmem_adv_table.entries[slot].allocated && shmem_adv_table.entries[slot].pa == pa){
+      shmem_adv_table.entries[slot].pa = 0;
+      shmem_adv_table.entries[slot].refcount = 0;
+      shmem_adv_table.entries[slot].allocated = 0;
+    }
+    release(&shmem_adv_table.lock);
+    kfree((void*)pa);
+    return 0;
+  }
+
+  return va;
+}
+
+int
+munmap_adv(uint64 addr)
+{
+  struct proc *p = myproc();
+  pte_t *pte;
+  uint64 pa;
+  int slot;
+
+  if((addr % PGSIZE) != 0)
+    return -1;
+  if(addr < SHMEM_ADV_REGION_BASE || addr >= SHMEM_ADV_REGION_TOP)
+    return -1;
+
+  pte = walk(p->pagetable, addr, 0);
+  if(pte == 0 || (*pte & PTE_V) == 0)
+    return -1;
+
+  pa = PTE2PA(*pte);
+
+  acquire(&shmem_adv_table.lock);
+  slot = shmem_adv_find_entry_by_pa(pa);
+  if(slot < 0){
+    release(&shmem_adv_table.lock);
+    return -1;
+  }
+
+  *pte = 0;
+  shmem_adv_table.entries[slot].refcount--;
+  if(shmem_adv_table.entries[slot].refcount == 0){
+    kfree((void*)shmem_adv_table.entries[slot].pa);
+    shmem_adv_table.entries[slot].pa = 0;
+    shmem_adv_table.entries[slot].refcount = 0;
+    shmem_adv_table.entries[slot].allocated = 0;
+  }
+  release(&shmem_adv_table.lock);
+  return 0;
+}
+
+int
+shmem_adv_fork_copy(pagetable_t old, pagetable_t new)
+{
+  uint64 va, pa, flags;
+  pte_t *pte, *newpte;
+  int slot;
+
+  for(va = SHMEM_ADV_REGION_BASE; va < SHMEM_ADV_REGION_TOP; va += PGSIZE){
+    pte = walk(old, va, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0)
+      continue;
+
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte);
+
+    acquire(&shmem_adv_table.lock);
+    slot = shmem_adv_find_entry_by_pa(pa);
+    if(slot < 0){
+      release(&shmem_adv_table.lock);
+      continue;
+    }
+    shmem_adv_table.entries[slot].refcount++;
+    release(&shmem_adv_table.lock);
+
+    newpte = walk(new, va, 0);
+    if(newpte && (*newpte & PTE_V)){
+      uint64 copied_pa = PTE2PA(*newpte);
+      *newpte = 0;
+      kfree((void*)copied_pa);
+    }
+
+    if(mappages(new, va, PGSIZE, pa, flags) != 0){
+      acquire(&shmem_adv_table.lock);
+      shmem_adv_table.entries[slot].refcount--;
+      if(shmem_adv_table.entries[slot].refcount == 0){
+        kfree((void*)shmem_adv_table.entries[slot].pa);
+        shmem_adv_table.entries[slot].pa = 0;
+        shmem_adv_table.entries[slot].refcount = 0;
+        shmem_adv_table.entries[slot].allocated = 0;
+      }
+      release(&shmem_adv_table.lock);
+      goto err;
+    }
+  }
+
+  return 0;
+
+err:
+  shmem_adv_proc_cleanup(new);
+  return -1;
+}
+
+void
+shmem_adv_proc_cleanup(pagetable_t pagetable)
+{
+  uint64 va, pa;
+  pte_t *pte;
+  int slot;
+
+  for(va = SHMEM_ADV_REGION_BASE; va < SHMEM_ADV_REGION_TOP; va += PGSIZE){
+    pte = walk(pagetable, va, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0)
+      continue;
+
+    pa = PTE2PA(*pte);
+    acquire(&shmem_adv_table.lock);
+    slot = shmem_adv_find_entry_by_pa(pa);
+    if(slot >= 0){
+      *pte = 0;
+      shmem_adv_table.entries[slot].refcount--;
+      if(shmem_adv_table.entries[slot].refcount == 0){
+        kfree((void*)shmem_adv_table.entries[slot].pa);
+        shmem_adv_table.entries[slot].pa = 0;
+        shmem_adv_table.entries[slot].refcount = 0;
+        shmem_adv_table.entries[slot].allocated = 0;
+      }
+    }
+    release(&shmem_adv_table.lock);
+  }
 }

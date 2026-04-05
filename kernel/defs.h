@@ -171,10 +171,17 @@ int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, int);
 void            init_shmem(void);
+void            init_shmem_adv(void);
+int             shmem_adv_fork_copy(pagetable_t, pagetable_t);
+void            shmem_adv_proc_cleanup(pagetable_t);
 uint64          sys_mmap(void);
 uint64          sys_munmap(void);
+uint64          sys_mmap_adv(void);
+uint64          sys_munmap_adv(void);
 uint64          mmap(void);
 int             munmap(uint64 va);
+uint64          mmap_adv(void);
+int             munmap_adv(uint64 va);
 
 // plic.c
 void            plicinit(void);

@@ -148,6 +148,7 @@ UPROGS=\
 	$U/_ps\
 	$U/_trace\
 	$U/_mmaptest\
+	$U/_mmapadvtest\
 	
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

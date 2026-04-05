@@ -46,3 +46,5 @@ entry("getprocs");
 entry("trace");
 entry("mmap");
 entry("munmap");
+entry("mmap_adv");
+entry("munmap_adv");

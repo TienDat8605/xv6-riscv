@@ -214,6 +214,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  shmem_adv_proc_cleanup(pagetable);
   uvmfree(pagetable, sz);
 }
 
@@ -272,6 +273,11 @@ kfork(void)
 
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+  if(shmem_adv_fork_copy(p->pagetable, np->pagetable) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;

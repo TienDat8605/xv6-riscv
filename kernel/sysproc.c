@@ -138,3 +138,17 @@ uint64 va;
 argaddr(0, &va); // argadd do not support validation since it return void. However, the va will be check in the munmap() anyway.
 return munmap(va);
 }
+
+uint64
+sys_mmap_adv(void)
+{
+  return mmap_adv();
+}
+
+uint64
+sys_munmap_adv(void)
+{
+  uint64 va;
+  argaddr(0, &va);
+  return munmap_adv(va);
+}

@@ -106,6 +106,8 @@ extern uint64 sys_trace(void);
 // Add to kernel/syscall.c
 extern uint64 sys_mmap(void);
 extern uint64 sys_munmap(void);
+extern uint64 sys_mmap_adv(void);
+extern uint64 sys_munmap_adv(void);
 // Add to syscalls[] array
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -135,6 +137,8 @@ static uint64 (*syscalls[])(void) = {
 [SYS_trace]   sys_trace,
 [SYS_mmap]    sys_mmap,
 [SYS_munmap]  sys_munmap,
+[SYS_mmap_adv]    sys_mmap_adv,
+[SYS_munmap_adv]  sys_munmap_adv,
 };
 
 //syscall name
@@ -164,6 +168,8 @@ static char *syscalls_names[] = {
 [SYS_trace]   "trace",
 [SYS_mmap]    "sharemem",
 [SYS_munmap]  "unsharemem",
+[SYS_mmap_adv]    "sharemem_adv",
+[SYS_munmap_adv]  "unsharemem_adv",
 };
 
 void

@@ -28,6 +28,7 @@ main()
     iinit();         // inode table
     fileinit();      // file table
     init_shmem();    // init shared memory
+    init_shmem_adv(); // init advanced shared memory
     virtio_disk_init(); // emulated hard disk
     userinit();      // first user process
     __sync_synchronize();
